@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "zyra-ai-db",
-      "database_id": "00000000-0000-4000-8000-000000000000",
+      "database_id": "c4f040fc-3f51-4eba-918f-4e87d08f3da1",
       "migrations_dir": "drizzle",
     },
   ],
