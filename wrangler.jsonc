@@ -29,7 +29,7 @@
     "GEMINI_MODEL": "gemini-3.5-flash-lite",
     "FREE_TIER_CONFIRMED": "false",
     "REGISTRATION_ENABLED": "false",
-    "TURNSTILE_SITE_KEY": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFt2W38_Dh_oAm-i",
     "AUTH_CPU_VERIFIED": "false",
     "DAILY_TOKEN_BUDGET": "150000",
     "MINUTE_TOKEN_BUDGET": "8000",
