@@ -100,6 +100,10 @@ before(async () => {
     d1Databases: { DB: "zyra-tests" },
     bindings: {
       APP_ENV: "development",
+      AUTH_CHECK_EXPIRES_AT: String(Date.now() + 3600_000),
+      ABUSE_SECRET: "diagnostic-fixture-32-character-secret",
+      TURNSTILE_SITE_KEY: "test-public-key",
+      TURNSTILE_SECRET_KEY: "test-secret-never-live",
       REGISTRATION_ENABLED: "true",
       FREE_TIER_CONFIRMED: "true",
       GROQ_API_KEY: "test-key-never-live",
@@ -465,4 +469,53 @@ test("rename, delete, logout revocation and account deletion remove account data
     .bind(accounts.get("alice")!.id)
     .first<{ n: number }>();
   assert.equal(count?.n, 0);
+});
+
+test("temporary auth diagnostic rejects passwords and cross-origin requests, bounds KDF work, and leaves accounts closed", async () => {
+  const before = await db
+    .prepare("SELECT COUNT(*) AS count FROM users")
+    .first<{ count: number }>();
+  assert.equal(
+    (await request("/setup/auth-check", "POST", { password: PASSWORD })).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request("/setup/auth-check", "POST", {}, undefined, {
+        Origin: "https://evil.test",
+      })
+    ).status,
+    403,
+  );
+  const productionRequest = await mf.dispatchFetch(
+    "https://example.test/api/setup/auth-check",
+    {
+      method: "POST",
+      headers: {
+        Origin: "https://example.test",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    },
+  );
+  assert.equal(productionRequest.status, 400);
+  assert.match(await productionRequest.text(), /Complete the security check/);
+  for (let i = 0; i < 3; i++) {
+    const response = await request("/setup/auth-check", "POST", {});
+    assert.equal(response.status, 200, await response.clone().text());
+    const result = (await response.json()) as any;
+    assert.equal(result.hashAndVerifyCompleted, true);
+    assert.equal(result.cpuVerified, false);
+    assert.ok(!("hash" in result));
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+  assert.equal((await request("/setup/auth-check", "POST", {})).status, 429);
+  const after = await db
+    .prepare("SELECT COUNT(*) AS count FROM users")
+    .first<{ count: number }>();
+  assert.equal(before!.count, after!.count);
+  const config = await mf.dispatchFetch("https://example.test/api/config");
+  const data = (await config.json()) as any;
+  assert.equal(data.authReady, false);
+  assert.equal(data.registrationEnabled, false);
 });

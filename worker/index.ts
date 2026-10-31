@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { authCheckConfig, runAuthCheck } from "./diagnostics";
 import { localDevelopment } from "./env";
 import { defaultSettings } from "../shared/types";
 import {
@@ -61,6 +62,10 @@ async function route(
   if (!["GET", "POST", "PATCH", "DELETE"].includes(method))
     throw new HttpError(405, "Method not allowed.");
   if (method !== "GET") validateOrigin(request);
+  if (path === "/api/setup/auth-check" && method === "GET")
+    return json(authCheckConfig(env));
+  if (path === "/api/setup/auth-check" && method === "POST")
+    return runAuthCheck(request, env);
   if (path === "/api/config" && method === "GET")
     return json(appConfig(request, env));
   if (path === "/api/health" && method === "GET") {

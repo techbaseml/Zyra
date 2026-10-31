@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ml">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>ZYRA — Server check</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #050816;
+        color: #f8faff;
+      }
+      body {
+        margin: 0;
+        min-height: 100svh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      main {
+        width: 100%;
+        max-width: 540px;
+        background: #0b1023;
+        border: 1px solid #ffffff20;
+        border-radius: 24px;
+        padding: 28px;
+        box-sizing: border-box;
+      }
+      h1 {
+        font-size: 25px;
+      }
+      p {
+        line-height: 1.7;
+        color: #aab6cc;
+      }
+      button {
+        width: 100%;
+        min-height: 52px;
+        margin-top: 20px;
+        border: 0;
+        border-radius: 14px;
+        font-size: 16px;
+        font-weight: 700;
+        background: linear-gradient(120deg, #00e5ff, #9d81ff);
+        color: #050816;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font: 14px/1.7 system-ui;
+        color: #f8faff;
+        border: 1px solid #ffffff20;
+        padding: 16px;
+        border-radius: 14px;
+      }
+      a {
+        color: #00e5ff;
+      }
+      #challenge {
+        min-height: 70px;
+        overflow-x: auto;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #00e5ff;
+        outline-offset: 4px;
+      }
+    </style>
+    <script src="/auth-check.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <p>ZYRA · Temporary server check</p>
+      <h1>Login പരിശോധന</h1>
+      <p>
+        യഥാർത്ഥ password അല്ലെങ്കിൽ API key ഇവിടെ നൽകേണ്ടതില്ല. Server സ്വയം
+        സൃഷ്ടിച്ച data ഉപയോഗിച്ച് password hashing പരിശോധിക്കും.
+      </p>
+      <p>
+        ഈ പരിശോധന login തുറക്കില്ല. Cloudflare CPU പരിശോധനയും account-flow
+        പരിശോധനയും പിന്നീട് ആവശ്യമാണ്. പരമാവധി 3 test requests / 24 hours.
+      </p>
+      <div id="challenge"></div>
+      <button id="run" disabled>Run password check</button>
+      <pre id="result" role="status" aria-live="polite">
+Setup പരിശോധിക്കുന്നു…</pre
+      >
+      <p><a href="/">Back to ZYRA</a></p>
+    </main>
+  </body>
+</html>

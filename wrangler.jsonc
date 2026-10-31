@@ -31,10 +31,12 @@
     "REGISTRATION_ENABLED": "false",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFt2W38_Dh_oAm-i",
     "AUTH_CPU_VERIFIED": "false",
+    "AUTH_CHECK_EXPIRES_AT": "1793451552152",
     "DAILY_TOKEN_BUDGET": "150000",
     "MINUTE_TOKEN_BUDGET": "8000",
   },
   "observability": {
-    "enabled": false,
+    "enabled": true,
+    "logs": { "invocation_logs": true, "head_sampling_rate": 1 },
   },
 }

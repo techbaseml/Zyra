@@ -14,6 +14,7 @@ export interface Env {
   MINUTE_TOKEN_BUDGET?: string;
   REGISTRATION_ENABLED?: string;
   AUTH_CPU_VERIFIED?: string;
+  AUTH_CHECK_EXPIRES_AT?: string;
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
   ABUSE_SECRET?: string;
