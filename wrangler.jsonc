@@ -27,7 +27,7 @@
     "DAILY_IP_LIMIT": "40",
     "GROQ_MODEL": "openai/gpt-oss-120b",
     "GEMINI_MODEL": "gemini-3.5-flash-lite",
-    "FREE_TIER_CONFIRMED": "false",
+    "FREE_TIER_CONFIRMED": "true",
     "REGISTRATION_ENABLED": "false",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFt2W38_Dh_oAm-i",
     "AUTH_CPU_VERIFIED": "false",
