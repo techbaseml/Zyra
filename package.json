@@ -1,0 +1,49 @@
+{
+  "name": "zyra-ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "node --import ./scripts/sites-env.mjs ./node_modules/vite/bin/vite.js --host 0.0.0.0",
+    "build": "vite build && node scripts/sanitize-build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "db:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "npm run build && wrangler deploy --config dist/server/wrangler.json",
+    "check:providers": "node scripts/check-providers.mjs",
+    "install:ci": "bash scripts/install-pnpm.sh"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "lucide-react": "^1.31.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/workers-types": "4.20260515.1",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "miniflare": "^4.20260515.0",
+    "prettier": "3.6.2",
+    "tailwindcss": "4.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "5.9.3",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

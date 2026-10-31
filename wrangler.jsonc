@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zyra-ai",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zyra-ai-db",
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "drizzle",
+    },
+  ],
+  "vars": {
+    "APP_ENV": "production",
+    "DAILY_USER_LIMIT": "20",
+    "DAILY_GLOBAL_LIMIT": "200",
+    "DAILY_IP_LIMIT": "40",
+    "GROQ_MODEL": "openai/gpt-oss-120b",
+    "GEMINI_MODEL": "gemini-3.5-flash-lite",
+    "FREE_TIER_CONFIRMED": "false",
+    "REGISTRATION_ENABLED": "false",
+    "TURNSTILE_SITE_KEY": "",
+    "AUTH_CPU_VERIFIED": "false",
+    "DAILY_TOKEN_BUDGET": "150000",
+    "MINUTE_TOKEN_BUDGET": "8000",
+  },
+  "observability": {
+    "enabled": false,
+  },
+}
