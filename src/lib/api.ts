@@ -11,13 +11,43 @@ let csrf: string | null = null;
 export function setCsrf(value: string | null) {
   csrf = value;
 }
+async function sessionFetch(path: string, init: RequestInit) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(path, init);
+    if (response.status !== 409 || attempt >= 5) return response;
+    const data = (await response
+      .clone()
+      .json()
+      .catch(() => ({}))) as { code?: string };
+    if (data.code !== "auth_refresh_busy") return response;
+    // This code is emitted before any application mutation, so retrying is safe.
+    await new Promise<void>((resolve, reject) => {
+      if (init.signal?.aborted) {
+        reject(init.signal.reason);
+        return;
+      }
+      const abort = () => {
+        clearTimeout(timer);
+        reject(init.signal?.reason);
+      };
+      const timer = setTimeout(
+        () => {
+          init.signal?.removeEventListener("abort", abort);
+          resolve();
+        },
+        Math.min(500 * 2 ** attempt, 2000),
+      );
+      init.signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
+}
 export async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const response = await sessionFetch(`/api${path}`, {
     method,
     credentials: "same-origin",
     headers:
@@ -30,11 +60,9 @@ export async function api<T>(
     body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
     signal,
   });
-  const data = (await response
-    .json()
-    .catch(() => ({
-      error: "The server returned an unreadable response.",
-    }))) as { error?: string; code?: string };
+  const data = (await response.json().catch(() => ({
+    error: "The server returned an unreadable response.",
+  }))) as { error?: string; code?: string };
   if (!response.ok)
     throw new ApiError(
       data.error || "Request failed.",
@@ -44,7 +72,7 @@ export async function api<T>(
   return data as T;
 }
 export async function streamChat(body: unknown, signal: AbortSignal) {
-  const response = await fetch("/api/chat", {
+  const response = await sessionFetch("/api/chat", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf || "" },

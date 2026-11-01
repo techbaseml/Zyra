@@ -1,3 +1,5 @@
+> Superseded: the deployed custom KDF used 383 ms CPU. The diagnostic is now disabled. Use [Supabase setup](SUPABASE_SETUP.md); do not repeat this procedure or enable the legacy CPU flag.
+
 # Temporary authentication diagnostic from a phone
 
 Open `/auth-check.html` on the deployed ZYRA origin after the matching Cloudflare build completes. Complete Turnstile and press **Run password check**. This page never asks for a password, API key, or operator secret.

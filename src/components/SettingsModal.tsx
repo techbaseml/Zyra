@@ -29,7 +29,7 @@ export default function SettingsModal({
   onClose: () => void;
   onSave: (name: string, settings: Settings) => Promise<void>;
   onClear: () => void;
-  onLogout: () => void;
+  onLogout: (message?: string) => void;
   initial?: string;
 }) {
   const [tab, setTab] = useState(initial),
@@ -183,9 +183,9 @@ export default function SettingsModal({
                     />
                   </label>
                   <p className="fine-print">
-                    Your email is an account identifier. Email ownership
-                    verification and email changes are unavailable without a
-                    configured delivery service.
+                    Your email identifies your account. Email changes are not
+                    available here. Recovery is available only when email
+                    delivery is configured.
                   </p>
                   <details className="password-details">
                     <summary>Change password</summary>
@@ -258,10 +258,12 @@ export default function SettingsModal({
               </label>
               <div className="privacy-copy">
                 <p>
-                  ZYRA stores your email, display name, password hash,
-                  preferences, and chat history in Cloudflare D1. Conversations
-                  are restricted to your account; they are not end-to-end
-                  encrypted.
+                  ZYRA uses Supabase for email/password authentication. Supabase
+                  processes your credentials and stores password hashes.
+                  Cloudflare D1 stores your email, display name, preferences,
+                  encrypted provider session tokens, and chat history.
+                  Conversations are restricted to your account; they are not
+                  end-to-end encrypted.
                 </p>
                 <p>
                   Your messages and a bounded portion of the current
@@ -283,13 +285,24 @@ export default function SettingsModal({
                 </p>
                 <p>
                   Deleting a conversation removes it from the active database.
-                  Account deletion also revokes sessions and removes profile and
-                  chat data. Infrastructure backups and provider retention may
-                  persist under their policies. Pseudonymous abuse counters
-                  expire after seven days, subject to periodic cleanup.
+                  Account deletion revokes sessions immediately and removes the
+                  Supabase identity, profile and chat data. If a service is
+                  unavailable, deletion is queued and retried hourly. Deletion
+                  identifiers are retained for seven days to prevent stale
+                  requests from restoring an account. Infrastructure backups and
+                  provider retention may persist under their policies.
+                  Pseudonymous abuse counters expire after seven days, subject
+                  to periodic cleanup.
                 </p>
               </div>
               <div className="privacy-links">
+                <a
+                  href="https://supabase.com/privacy"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Supabase privacy ↗
+                </a>
                 <a
                   href="https://console.groq.com/docs/your-data"
                   target="_blank"
@@ -339,11 +352,19 @@ export default function SettingsModal({
                         onClear();
                         setDeleting(null);
                       } else {
-                        await api("/account", "DELETE", {
-                          confirmation: confirm,
-                          password,
-                        });
-                        onLogout();
+                        const result = await api<{ pending?: boolean }>(
+                          "/account",
+                          "DELETE",
+                          {
+                            confirmation: confirm,
+                            password,
+                          },
+                        );
+                        onLogout(
+                          result.pending
+                            ? "Account access revoked. Deletion is queued and will retry automatically."
+                            : "Your account and chat history have been deleted.",
+                        );
                       }
                     });
                   }}
@@ -439,8 +460,10 @@ export default function SettingsModal({
               </p>
               <p className="fine-print">
                 Voice features depend on your browser and installed languages.
-                Malayalam voice quality varies by device. Password recovery is
-                unavailable until a real email recovery integration is added.
+                Malayalam voice quality varies by device. Password recovery
+                requires configured email delivery. Supabase Free projects may
+                pause after inactivity; account services can be unavailable
+                until the owner resumes the project.
               </p>
             </>
           )}

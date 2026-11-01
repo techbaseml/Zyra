@@ -1,6 +1,6 @@
 # Deploy ZYRA on your own Cloudflare account
 
-These steps deploy the existing React/Vite frontend and API Worker together. They do not rebuild the project from a starter. No paid plan is required by a deployment command, but the authentication CPU gate below is a real blocker until measured.
+These steps deploy the existing React/Vite frontend and API Worker together. They do not rebuild the project from a starter. No paid plan is required by a deployment command, and the Supabase configuration described below is required before public signup.
 
 ## 1. Install the project
 
@@ -44,28 +44,15 @@ pnpm db:remote
 
 This applies the numbered SQL migrations in `drizzle/`. Local and remote data are separate. Do not change applied migrations; generate a new migration after a schema change with `pnpm db:generate`.
 
-## 4. Prove strong authentication fits your Free Worker
+## 4. Configure Supabase Auth Free
 
-ZYRA uses native scrypt with `N=16384, r=8, p=5`, 32 random salt bytes and a 64-byte derived key. This is an OWASP-listed work-factor combination. Workers Free currently documents 10 ms CPU per request. The local workerd tests prove the implementation runs, **not** that a deployed Free Worker will fit that CPU budget. Strong password hashing is likely to exceed it.
+Follow [SUPABASE_SETUP.md](SUPABASE_SETUP.md). Keep `AUTH_PROVIDER=supabase` in production. The live custom scrypt diagnostic consumed 383 ms CPU; `AUTH_CPU_VERIFIED` stays false and the diagnostic expiry is zero. Do not weaken the password hash or enable billing. Supabase performs password hashing on its own service.
 
-Do not lower the KDF cost, enable billing, or set `AUTH_CPU_VERIFIED=true` to hide an error. Keep registration closed until the full flow is measured on the intended plan. The native Sites-hosted UI is not proof of your own Cloudflare Free account's limits.
-
-A separate, token-protected diagnostic is supplied. It uses generated test text, no user data, and no D1 access:
-
-```sh
-pnpm exec wrangler deploy --config wrangler.benchmark.jsonc
-pnpm exec wrangler secret put BENCHMARK_TOKEN --config wrangler.benchmark.jsonc
-```
-
-At the secret prompt, provide a random value of at least 32 characters from your password manager. Invoke the diagnostic using a terminal HTTP client with a `POST` request and `Authorization: Bearer <your token>` to the exact URL Wrangler printed. Do not put the token in a URL. Inspect Cloudflare's Worker CPU metrics and errors for repeated calls, including `exceededCpu`/error 1102. Returned `wallTimeMs` is **not CPU time**.
-
-Remove this temporary diagnostic through the Cloudflare dashboard after testing. If scrypt exceeds the Free CPU limit, the original combination of strong custom email/password auth and Workers Free is not established as feasible. Keep public signup closed and choose a reviewed free authentication-service architecture before launch. That would be a separate architectural change; this project does not silently swap providers or weaken security.
-
-Even if the isolated KDF passes, verify complete registration, login, password change, and deletion requests with D1 and Turnstile under the Free CPU limit before broad public use.
+Configure the project URL, publishable key and secret key as Cloudflare runtime secrets, then configure real SMTP and OTP email templates in Supabase. Public registration and recovery stay closed until `SUPABASE_EMAIL_ENABLED=true`. The existing D1 database and conversation ownership are retained; never create a second database to perform this migration.
 
 ## 5. Configure Turnstile and secrets
 
-In Cloudflare, create a free Turnstile widget for your exact `workers.dev` or custom hostname. Put its public site key in the `TURNSTILE_SITE_KEY` variable. The server verifies token success, action (`login`/`register`), and exact hostname.
+In Cloudflare, create a free Turnstile widget for your exact `workers.dev` or custom hostname. Put its public site key in the `TURNSTILE_SITE_KEY` variable. The server verifies token success, action (`login`, `register`, `verify`, `recover`, `reset`), and exact hostname.
 
 Set secrets using interactive Wrangler prompts:
 
@@ -76,7 +63,7 @@ pnpm exec wrangler secret put TURNSTILE_SECRET_KEY
 pnpm exec wrangler secret put ABUSE_SECRET
 ```
 
-`ABUSE_SECRET` must be a cryptographically random value of at least 32 characters. It hashes IP identifiers for abuse controls; it is not a password or session signing key. Opaque sessions are stored as SHA-256 token hashes in D1.
+`ABUSE_SECRET` must be a cryptographically random value of at least 32 characters. It hashes IP identifiers and derives a purpose-separated AES-GCM key for encrypted Supabase tokens. Rotating it invalidates existing provider sessions; users must sign in again. Opaque sessions are stored as SHA-256 token hashes in D1.
 
 In `wrangler.jsonc` configure:
 
@@ -84,7 +71,9 @@ In `wrangler.jsonc` configure:
 | --- | --- |
 | `APP_ENV` | `production` |
 | `FREE_TIER_CONFIRMED` | `true` only after verifying unbilled accounts |
-| `AUTH_CPU_VERIFIED` | `true` only after successful Free-plan CPU checks |
+| `AUTH_PROVIDER` | `supabase` |
+| `SUPABASE_EMAIL_ENABLED` | `true` only after SMTP and OTP delivery tests |
+| `AUTH_CPU_VERIFIED` | Keep `false`; not used for Supabase |
 | `REGISTRATION_ENABLED` | `true` only when ready to accept users |
 | `TURNSTILE_SITE_KEY` | Your widget's public site key |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` |
@@ -103,6 +92,7 @@ Upper bounds are enforced in the Worker. Application token estimates use UTF-8 b
 pnpm typecheck
 pnpm build
 pnpm test
+pnpm exec wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 pnpm exec wrangler deploy --config dist/server/wrangler.json
 ```
 

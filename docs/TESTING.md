@@ -2,13 +2,17 @@
 
 ## Completed in the development environment
 
-Final run on 31 October 2026: TypeScript check passed, production build passed, **28 automated tests passed**, zero failures.
+Final run on 31 October 2026: TypeScript check passed, production build passed, **44 automated tests passed**, zero failures.
 
 The automated suite uses the actual Cloudflare workerd runtime with Miniflare D1 for integration tests. Provider network traffic is blocked and replaced with **test-only transport fixtures**. These fixtures never ship in production code.
 
 Verified paths include registration, correct and incorrect password checks, opaque sessions, production cookie attributes, CSRF/origin rejection, per-account authorization, Unicode chat storage, edit/regenerate history replacement, persisted preferences across a second session, 20-request daily limits under concurrent admissions, primary-to-backup adapter fallback, no fallback on authentication errors or after partial output, safe Markdown, logout invalidation, credential-change race protection, conversation deletion and account cascade deletion.
 
 Desktop UI was inspected in a browser. A 390 px iframe viewport was inspected for mobile layout and measured at 390 px body width with no horizontal overflow. Malayalam suggestion text rendered and populated the composer. The settings dialog and light/dark switching were exercised. This is a viewport check, not a physical Android/iPhone keyboard or microphone test.
+
+## Supabase-specific tests
+
+The added transport tests cover configuration fail-closed behavior, UTF-8 password limits, AES-GCM token encryption/AAD, email confirmation, wrong credentials/codes, opaque sessions, CSRF, cross-account isolation and cross-browser history, refresh serialization, provider outages, legacy-email collision refusal, password change, recovery, outage-safe logout, durable account deletion and scheduled retry. These use the real compiled Worker and D1, with a deterministic Supabase HTTP fixture. They do not verify Supabase availability or actual email delivery.
 
 ## Run automated verification
 
@@ -24,8 +28,9 @@ Build before integration tests because Miniflare tests the compiled Worker entry
 
 - Live Groq/Gemini inference and the configured account's model availability.
 - Malayalam, English, and mixed-language answer quality; Unicode and prompting tests do not establish model quality.
-- Deployed Cloudflare **Free** CPU time for scrypt and the complete auth flow.
-- Production Turnstile hostname/action validation with a real widget.
+- Real Supabase credentials, email delivery/OTP templates, and the complete deployed Supabase account flow.
+- Deployed Cloudflare **Free** CPU time for the new Supabase flow. The prior scrypt diagnostic was measured at 383 ms and is disabled.
+- The real Turnstile widget succeeded on the earlier diagnostic; new signup/verify/recovery actions still require live checks.
 - Two physical devices syncing over the live deployment.
 - Mobile software keyboards, microphone permission flows, browser STT, and Malayalam TTS voices.
 - Provider outages and quotas under production load; dependency/penetration auditing.
@@ -46,7 +51,7 @@ This makes six small live requests (three languages per provider), consumes real
 
 | Scenario | Expected result |
 | --- | --- |
-| Sign up with a 12+ character password and privacy consent | Account created after a valid security check; opaque HttpOnly cookie issued |
+| Sign up with a 12+ character password and privacy consent | Email code sent after security check; no D1 session until confirmation succeeds |
 | Reload and reopen in another signed-in browser | Same profile, conversations, and settings |
 | Sign in as a second account | No access to the first account's conversation IDs or actions |
 | Send English, Malayalam, and mixed prompts | Genuine streaming answers; language matches message/preference |

@@ -15,6 +15,13 @@
       "when": 1793376369882,
       "tag": "0001_unusual_maginty",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793461183214,
+      "tag": "0002_supabase_auth",
+      "breakpoints": true
     }
   ]
 }

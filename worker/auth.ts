@@ -2,6 +2,16 @@ import type { Env } from "./env";
 import { localDevelopment } from "./env";
 import { defaultSettings, type Settings, type User } from "../shared/types";
 import { HttpError, constantEqual, digest, randomToken } from "./security";
+import {
+  usesSupabase,
+  tokensFrom,
+  refreshTokens,
+  sealTokens,
+  openTokens,
+  getAuthUser,
+  subject,
+  type AuthTokens,
+} from "./supabase";
 export type UserRow = {
   id: string;
   email: string;
@@ -10,6 +20,7 @@ export type UserRow = {
   settings: string;
   created_at: number;
   consent_at: number;
+  auth_subject?: string | null;
 };
 export function publicUser(row: UserRow): User {
   return {
@@ -64,17 +75,23 @@ export async function createSession(
   env: Env,
   userId: string,
   expectedPasswordHash: string,
+  provider?: AuthTokens,
 ) {
   const token = randomToken(),
     csrf = randomToken();
+  const tokenHash = await digest(token);
   const inserted = await env.DB.prepare(
-    "INSERT INTO sessions(token_hash,user_id,csrf,expires_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND password_hash=?) RETURNING token_hash",
+    "INSERT INTO sessions(token_hash,user_id,csrf,expires_at,provider_tokens,provider_expires_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND password_hash=? AND NOT EXISTS(SELECT 1 FROM auth_deletions WHERE auth_deletions.user_id=users.id)) RETURNING token_hash",
   )
     .bind(
-      await digest(token),
+      tokenHash,
       userId,
       csrf,
       Date.now() + 604800_000,
+      provider
+        ? await sealTokens(env, provider, `${userId}|${tokenHash}`)
+        : null,
+      provider ? Date.now() + provider.expires_in * 1000 : null,
       userId,
       expectedPasswordHash,
     )
@@ -83,7 +100,12 @@ export async function createSession(
     throw new HttpError(401, "Your credentials changed. Please sign in again.");
   return { token, csrf };
 }
-export async function getSession(request: Request, env: Env, required = true) {
+export async function getSession(
+  request: Request,
+  env: Env,
+  required = true,
+  checkProvider = true,
+) {
   const name = cookieName(request, env);
   const token = (request.headers.get("Cookie") || "")
     .split(";")
@@ -97,10 +119,16 @@ export async function getSession(request: Request, env: Env, required = true) {
   }
   const tokenHash = await digest(token);
   const row = await env.DB.prepare(
-    "SELECT users.*, sessions.csrf FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>?",
+    "SELECT users.*, sessions.csrf, sessions.provider_tokens, sessions.provider_expires_at FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>? AND NOT EXISTS(SELECT 1 FROM auth_deletions WHERE auth_deletions.user_id=users.id)",
   )
     .bind(tokenHash, Date.now())
-    .first<UserRow & { csrf: string }>();
+    .first<
+      UserRow & {
+        csrf: string;
+        provider_tokens: string | null;
+        provider_expires_at: number | null;
+      }
+    >();
   if (!row) {
     if (required)
       throw new HttpError(
@@ -110,7 +138,117 @@ export async function getSession(request: Request, env: Env, required = true) {
       );
     return null;
   }
-  return { row, tokenHash, csrf: row.csrf, user: publicUser(row) };
+  let provider: AuthTokens | undefined;
+  // Legacy cookies never cross the authentication-provider boundary.
+  if (usesSupabase(env) !== !!row.auth_subject) {
+    if (!required) return null;
+    throw new HttpError(401, "Please sign in again.", "unauthorized");
+  }
+  if (row.auth_subject && checkProvider) {
+    try {
+      if (!row.provider_tokens)
+        throw new HttpError(401, "Please sign in again.", "unauthorized");
+      provider = await openTokens(
+        env,
+        row.provider_tokens,
+        `${row.id}|${tokenHash}`,
+      );
+      if (
+        !row.provider_expires_at ||
+        row.provider_expires_at < Date.now() + 60_000
+      ) {
+        const lockId = randomToken();
+        const lock = await env.DB.prepare(
+          "UPDATE sessions SET refresh_lock_id=?,refresh_lock_until=? WHERE token_hash=? AND expires_at>? AND refresh_lock_until<? RETURNING token_hash",
+        )
+          .bind(lockId, Date.now() + 30_000, tokenHash, Date.now(), Date.now())
+          .first();
+        if (!lock)
+          throw new HttpError(
+            409,
+            "Your session is being refreshed. Please try again.",
+            "auth_refresh_busy",
+          );
+        try {
+          // Re-read after taking the lease: a concurrent request may have refreshed already.
+          const current = await env.DB.prepare(
+            "SELECT provider_tokens,provider_expires_at FROM sessions WHERE token_hash=? AND refresh_lock_id=?",
+          )
+            .bind(tokenHash, lockId)
+            .first<{ provider_tokens: string; provider_expires_at: number }>();
+          if (!current)
+            throw new HttpError(401, "Please sign in again.", "unauthorized");
+          provider = await openTokens(
+            env,
+            current.provider_tokens,
+            `${row.id}|${tokenHash}`,
+          );
+          if (current.provider_expires_at < Date.now() + 60_000) {
+            provider = tokensFrom(
+              await refreshTokens(env, provider.refresh_token),
+            );
+            const encrypted = await sealTokens(
+              env,
+              provider,
+              `${row.id}|${tokenHash}`,
+            );
+            const saved = await env.DB.prepare(
+              "UPDATE sessions SET provider_tokens=?,provider_expires_at=? WHERE token_hash=? AND refresh_lock_id=? AND EXISTS(SELECT 1 FROM users WHERE id=? AND password_hash=?) RETURNING token_hash",
+            )
+              .bind(
+                encrypted,
+                Date.now() + provider.expires_in * 1000,
+                tokenHash,
+                lockId,
+                row.id,
+                row.password_hash,
+              )
+              .first();
+            if (!saved)
+              throw new HttpError(401, "Please sign in again.", "unauthorized");
+          }
+        } finally {
+          await env.DB.prepare(
+            "UPDATE sessions SET refresh_lock_id=NULL,refresh_lock_until=0 WHERE token_hash=? AND refresh_lock_id=?",
+          )
+            .bind(tokenHash, lockId)
+            .run();
+        }
+      }
+      const identity = await getAuthUser(env, provider.access_token);
+      if (
+        subject(env, identity) !== row.auth_subject ||
+        identity.email.toLowerCase() !== row.email
+      )
+        throw new HttpError(
+          401,
+          "Your account identity changed. Please sign in again.",
+          "unauthorized",
+        );
+      // Password changes/logout may have invalidated the session while the provider was responding.
+      const stillValid = await env.DB.prepare(
+        "SELECT token_hash FROM sessions WHERE token_hash=? AND EXISTS(SELECT 1 FROM users WHERE id=? AND password_hash=?)",
+      )
+        .bind(tokenHash, row.id, row.password_hash)
+        .first();
+      if (!stillValid)
+        throw new HttpError(401, "Please sign in again.", "unauthorized");
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 401) {
+        await env.DB.prepare("DELETE FROM sessions WHERE token_hash=?")
+          .bind(tokenHash)
+          .run();
+        if (!required) return null;
+        throw new HttpError(
+          401,
+          "Your session expired. Please sign in again.",
+          "unauthorized",
+        );
+      }
+      throw e;
+    }
+  }
+  return { row, tokenHash, csrf: row.csrf, user: publicUser(row), provider };
 }
 export function verifyCsrf(request: Request, csrf: string) {
   if (!constantEqual(request.headers.get("X-CSRF-Token") || "", csrf))

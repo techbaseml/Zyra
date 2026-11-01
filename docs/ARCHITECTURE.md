@@ -11,6 +11,9 @@ The browser sends same-origin requests to `/api/*`. The Worker authenticates the
 | `GET /api/me` | Public profile, session CSRF token, usage |
 | `POST /api/auth/register` | Name/email/password, consent, valid Turnstile |
 | `POST /api/auth/login` | Email/password and Turnstile |
+| `POST /api/auth/verify` | Email confirmation code + consent + Turnstile |
+| `POST /api/auth/recover` | Request recovery email code, when delivery is configured |
+| `POST /api/auth/reset` | Verify recovery code, update password, revoke sessions |
 | `POST /api/auth/logout` | Revoke current session |
 | `PATCH /api/profile` | Validated name and preferences |
 | `POST /api/account/password` | Reauthenticate, change password, revoke all sessions |
@@ -27,11 +30,17 @@ Authenticated mutations require `X-CSRF-Token`. All mutations require exact-orig
 
 ## Sessions and passwords
 
-Native scrypt uses `N=16384,r=8,p=5,maxmem=32MiB`, unique 32-byte random salts, and 64-byte outputs. Comparisons are timing-safe. Unknown-account login still runs a full KDF; Turnstile and pre-KDF limits reduce automated abuse. Email is not verified and cannot be changed through this UI.
+Production uses Supabase Auth through server-side REST calls. User passwords are processed and hashed by Supabase. The Worker never stores a Supabase password hash. Local scrypt (`N=16384,r=8,p=5`) remains available for offline development/legacy code only; the production configuration does not enable it.
 
-Sessions use 32 random bytes; only their SHA-256 digest is stored in D1. Production cookies are `__Host-zyra_session; Secure; HttpOnly; SameSite=Lax; Path=/` with a seven-day absolute expiry. CSRF tokens are independently random. Session insertion checks the verified password hash remains current. Password changes compare the verified hash and revoke sessions atomically.
+Supabase project origin plus immutable user ID forms `auth_subject`. The Worker verifies `/user` using the issued access token. It never trusts client-supplied identity claims, and never links by matching email. D1 `password_hash` for external users is a random credential epoch, not a password-derived value. Session creation compares the captured epoch to prevent a concurrent password change from issuing a stale session.
 
-There is no session-signing secret: sessions are opaque database records. `ABUSE_SECRET` HMACs IP identifiers. Every public KDF route is disabled until the operator verifies Free-plan CPU feasibility. This is a deployment prerequisite, not a performance guarantee.
+Sessions use 32 random bytes; only their SHA-256 digest is stored in D1. Production cookies are `__Host-zyra_session; Secure; HttpOnly; SameSite=Lax; Path=/` with seven-day absolute expiry. CSRF tokens are independently random. Supabase access/refresh tokens remain server-side, encrypted with AES-GCM using a purpose-separated key derived from the random `ABUSE_SECRET`. Ciphertext AAD binds the project origin, D1 user and session hash. The same secret separately HMACs pseudonymous IP identifiers. Secret rotation requires fresh sign-in.
+
+Before each authenticated request, the Worker checks the provider user online. Expiring access tokens refresh under an atomic 30-second D1 lease; other requests receive a specific retryable response before any application mutation. Session existence and credential epoch are rechecked after remote validation. Temporary provider failures fail closed but do not erase valid sessions. Local logout revokes D1 immediately even if Supabase is unavailable. ZYRA password changes and recovery revoke every D1 session. External Supabase revocation retains its standard JWT expiry window; see setup documentation.
+
+Email signup and recovery stay closed until real SMTP and OTP templates are configured. Supabase confirmation remains enabled. Recovery codes are verified on the server and never logged. A new authenticated identity must accept the privacy notice before a D1 account is created.
+
+Deletion uses a durable outbox: revoke D1 sessions, delete the Supabase identity, then cascade D1 user/chat deletion. Partial failures retry hourly. The outbox also blocks stale sign-ins from resurrecting deleted identities. Completed identifiers expire after seven days. No paid queue is involved.
 
 ## Ownership and concurrency
 

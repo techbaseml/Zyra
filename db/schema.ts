@@ -4,6 +4,7 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   password_hash: text("password_hash").notNull(),
+  auth_subject: text("auth_subject").unique(),
   settings: text("settings").notNull(),
   created_at: integer("created_at").notNull(),
   consent_at: integer("consent_at").notNull(),
@@ -17,12 +18,22 @@ export const sessions = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     csrf: text("csrf").notNull(),
     expires_at: integer("expires_at").notNull(),
+    provider_tokens: text("provider_tokens"),
+    provider_expires_at: integer("provider_expires_at"),
+    refresh_lock_id: text("refresh_lock_id"),
+    refresh_lock_until: integer("refresh_lock_until").notNull().default(0),
   },
   (t) => [
     index("sessions_user").on(t.user_id),
     index("sessions_expiry").on(t.expires_at),
   ],
 );
+export const authDeletions = sqliteTable("auth_deletions", {
+  auth_subject: text("auth_subject").primaryKey(),
+  user_id: text("user_id").notNull(),
+  requested_at: integer("requested_at").notNull(),
+  completed_at: integer("completed_at"),
+});
 export const conversations = sqliteTable(
   "conversations",
   {

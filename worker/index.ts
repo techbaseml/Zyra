@@ -27,26 +27,41 @@ import {
 } from "./auth";
 import { chat, ownedConversation, withMutationLock } from "./chat";
 import { limits, usage } from "./quotas";
+import * as supabase from "./supabase";
+import { supabaseAuthRoute, reauthenticate } from "./supabase-routes";
+import { finishDeletion, retryDeletions } from "./account-deletion";
 const json = (value: unknown, status = 200, headers?: HeadersInit) =>
   Response.json(value, { status, headers });
 export function appConfig(request: Request, env: Env) {
   const authReady =
-    localDevelopment(request, env) ||
+    (localDevelopment(request, env) &&
+      (!supabase.usesSupabase(env) || supabase.supabaseReady(env))) ||
     !!(
       env.ABUSE_SECRET &&
       env.ABUSE_SECRET.length >= 24 &&
       env.TURNSTILE_SITE_KEY &&
       env.TURNSTILE_SECRET_KEY &&
-      env.AUTH_CPU_VERIFIED === "true"
+      (supabase.usesSupabase(env)
+        ? supabase.supabaseReady(env)
+        : env.AUTH_CPU_VERIFIED === "true")
     );
   return {
     aiReady: env.FREE_TIER_CONFIRMED === "true" && !!env.GROQ_API_KEY,
     authReady,
-    registrationEnabled: authReady && env.REGISTRATION_ENABLED === "true",
+    registrationEnabled:
+      authReady &&
+      env.REGISTRATION_ENABLED === "true" &&
+      (!supabase.usesSupabase(env) || env.SUPABASE_EMAIL_ENABLED === "true"),
     turnstileSiteKey: localDevelopment(request, env)
       ? ""
       : env.TURNSTILE_SITE_KEY || "",
-    recoveryAvailable: false as const,
+    recoveryAvailable:
+      authReady &&
+      supabase.usesSupabase(env) &&
+      env.SUPABASE_EMAIL_ENABLED === "true",
+    authProvider: supabase.usesSupabase(env)
+      ? ("supabase" as const)
+      : ("local" as const),
     dailyLimit: limits(env).user,
   };
 }
@@ -82,6 +97,12 @@ async function route(
         : { used: 0, limit: limits(env).user, resetsAt: "" },
     });
   }
+  if (
+    supabase.usesSupabase(env) &&
+    /^\/api\/auth\/(login|register|verify|recover|reset)$/.test(path) &&
+    method === "POST"
+  )
+    return supabaseAuthRoute(request, env, appConfig(request, env));
   if (
     (path === "/api/auth/register" || path === "/api/auth/login") &&
     method === "POST"
@@ -180,13 +201,31 @@ async function route(
       { "Set-Cookie": sessionCookie(request, env, session.token) },
     );
   }
-  const session = (await getSession(request, env))!;
+  const session = (await getSession(
+    request,
+    env,
+    true,
+    path !== "/api/auth/logout",
+  ))!;
   if (method !== "GET") verifyCsrf(request, session.csrf);
   await rateLimit(env, `api:${session.user.id}`, 120, 60);
   if (path === "/api/auth/logout" && method === "POST") {
     await env.DB.prepare("DELETE FROM sessions WHERE token_hash=?")
       .bind(session.tokenHash)
       .run();
+    if (session.row.auth_subject && session.row.provider_tokens) {
+      // Local logout always succeeds even during a provider outage.
+      ctx.waitUntil(
+        supabase
+          .openTokens(
+            env,
+            session.row.provider_tokens,
+            `${session.row.id}|${session.tokenHash}`,
+          )
+          .then((t) => supabase.revokeProviderSession(env, t.access_token))
+          .catch(() => {}),
+      );
+    }
     return json({ ok: true }, 200, {
       "Set-Cookie": sessionCookie(request, env, "", true),
     });
@@ -208,6 +247,49 @@ async function route(
       );
     const b = await readJson(request, 4000);
     await rateLimit(env, `reauth:${session.user.id}`, 5, 900);
+    if (supabase.usesSupabase(env)) {
+      const nextPassword = supabase.providerPassword(b.newPassword);
+      const fresh = await reauthenticate(env, session.row, b.currentPassword);
+      try {
+        await withMutationLock(env, session.user.id, async () => {
+          const unchanged = await env.DB.prepare(
+            "SELECT id FROM users WHERE id=? AND password_hash=?",
+          )
+            .bind(session.user.id, session.row.password_hash)
+            .first();
+          if (!unchanged)
+            throw new HttpError(
+              409,
+              "Your credentials changed. Please sign in again.",
+            );
+          await supabase.updatePassword(
+            env,
+            fresh.access_token,
+            nextPassword,
+            supabase.providerPassword(b.currentPassword),
+          );
+          await env.DB.batch([
+            env.DB.prepare("UPDATE users SET password_hash=? WHERE id=?").bind(
+              `external$${crypto.randomUUID()}`,
+              session.user.id,
+            ),
+            env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(
+              session.user.id,
+            ),
+          ]);
+        });
+        await supabase
+          .revokeProviderSession(env, fresh.access_token, "global")
+          .catch(() => {});
+        return json({ ok: true }, 200, {
+          "Set-Cookie": sessionCookie(request, env, "", true),
+        });
+      } finally {
+        await supabase
+          .revokeProviderSession(env, fresh.access_token)
+          .catch(() => {});
+      }
+    }
     if (
       !(await verifyPassword(
         validatePassword(b.currentPassword),
@@ -241,6 +323,50 @@ async function route(
       );
     const b = await readJson(request, 2000);
     await rateLimit(env, `reauth:${session.user.id}`, 5, 900);
+    if (supabase.usesSupabase(env)) {
+      if (b.confirmation !== "DELETE")
+        throw new HttpError(400, "Type DELETE to confirm.");
+      const fresh = await reauthenticate(env, session.row, b.password);
+      try {
+        let pending = false;
+        await withMutationLock(env, session.user.id, async () => {
+          const unchanged = await env.DB.prepare(
+            "SELECT id FROM users WHERE id=? AND password_hash=?",
+          )
+            .bind(session.user.id, session.row.password_hash)
+            .first();
+          if (!unchanged)
+            throw new HttpError(
+              409,
+              "Your credentials changed. Please sign in again.",
+            );
+          await env.DB.batch([
+            env.DB.prepare(
+              "INSERT INTO auth_deletions(auth_subject,user_id,requested_at) VALUES(?,?,?) ON CONFLICT(auth_subject) DO NOTHING",
+            ).bind(session.row.auth_subject, session.user.id, Date.now()),
+            env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(
+              session.user.id,
+            ),
+          ]);
+          try {
+            await finishDeletion(
+              env,
+              session.user.id,
+              session.row.auth_subject!,
+            );
+          } catch {
+            pending = true;
+          }
+        });
+        return json({ ok: true, pending }, pending ? 202 : 200, {
+          "Set-Cookie": sessionCookie(request, env, "", true),
+        });
+      } finally {
+        await supabase
+          .revokeProviderSession(env, fresh.access_token)
+          .catch(() => {});
+      }
+    }
     if (
       b.confirmation !== "DELETE" ||
       !(await verifyPassword(
@@ -341,6 +467,13 @@ async function route(
   throw new HttpError(404, "Endpoint not found.");
 }
 export default {
+  async scheduled(
+    _event: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ) {
+    ctx.waitUntil(retryDeletions(env));
+  },
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     let response: Response;
     try {

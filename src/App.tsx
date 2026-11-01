@@ -1228,9 +1228,9 @@ export default function App() {
               newChat();
               notify("Conversations cleared.");
             }}
-            onLogout={() => {
+            onLogout={(message) => {
               clearSession();
-              notify("Account updated. You are signed out.");
+              notify(message || "Account updated. You are signed out.");
             }}
           />
         )}

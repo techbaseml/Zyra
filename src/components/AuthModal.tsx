@@ -8,9 +8,11 @@ import {
   UserRound,
 } from "lucide-react";
 import type { AppConfig, SessionData } from "../../shared/types";
-import { api, errorMessage } from "../lib/api";
+import { api, ApiError, errorMessage } from "../lib/api";
 import Modal from "./Modal";
 import Turnstile from "./Turnstile";
+type Mode = "login" | "register" | "verify" | "recover" | "reset";
+type NextStep = { next: Mode; message: string };
 export default function AuthModal({
   config,
   onClose,
@@ -20,22 +22,55 @@ export default function AuthModal({
   onClose: () => void;
   onSuccess: (data: SessionData) => void;
 }) {
-  const [mode, setMode] = useState<"login" | "register">("login"),
+  const [mode, setMode] = useState<Mode>("login"),
     [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
     [name, setName] = useState(""),
     [consent, setConsent] = useState(false),
+    [needsConsent, setNeedsConsent] = useState(false),
     [visible, setVisible] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
     [token, setToken] = useState(""),
     [attempt, setAttempt] = useState(0),
-    [recovery, setRecovery] = useState(false);
+    [code, setCode] = useState("");
   const register = mode === "register",
-    ready = config.authReady && (!register || config.registrationEnabled);
+    confirming = mode === "verify" || mode === "reset";
+  const ready =
+    config.authReady &&
+    (!(register || mode === "verify") || config.registrationEnabled) &&
+    (!(mode === "recover" || mode === "reset") || config.recoveryAvailable);
+  const resetChallenge = () => {
+    setToken("");
+    setAttempt((v) => v + 1);
+  };
+  function changeMode(next: Mode) {
+    setMode(next);
+    setError("");
+    setNotice("");
+    setPassword("");
+    setCode("");
+    resetChallenge();
+  }
+  const labels: Record<Mode, string> = {
+    login: "Sign in to ZYRA",
+    register: "Create your account",
+    verify: "Confirm email",
+    recover: "Send recovery code",
+    reset: "Reset password",
+  };
   return (
     <Modal
-      title={register ? "Make yourself at home" : "Welcome back"}
+      title={
+        register
+          ? "Make yourself at home"
+          : mode === "recover" || mode === "reset"
+            ? "Reset your password"
+            : mode === "verify"
+              ? "Check your inbox"
+              : "Welcome back"
+      }
       onClose={onClose}
     >
       <p className="modal-intro">
@@ -44,22 +79,18 @@ export default function AuthModal({
       </p>
       <div className="segmented">
         <button
-          className={!register ? "selected" : ""}
-          onClick={() => {
-            setMode("login");
-            setError("");
-            setToken("");
-          }}
+          type="button"
+          disabled={busy}
+          className={mode === "login" ? "selected" : ""}
+          onClick={() => changeMode("login")}
         >
           Sign in
         </button>
         <button
+          type="button"
+          disabled={busy}
           className={register ? "selected" : ""}
-          onClick={() => {
-            setMode("register");
-            setError("");
-            setToken("");
-          }}
+          onClick={() => changeMode("register")}
         >
           Create account
         </button>
@@ -67,9 +98,14 @@ export default function AuthModal({
       {!ready && (
         <div className="notice">
           {config.authReady
-            ? "New registrations are currently closed."
-            : "Accounts are awaiting secure server setup. Sign-in will be available once configuration and security checks are complete."}
+            ? "New registrations are currently closed while email delivery is being configured."
+            : "Accounts are awaiting secure server setup. Sign-in will be available once configuration is complete."}
         </div>
+      )}
+      {notice && (
+        <p className="notice" role="status">
+          {notice}
+        </p>
       )}
       <form
         onSubmit={async (e) => {
@@ -77,20 +113,32 @@ export default function AuthModal({
           setBusy(true);
           setError("");
           try {
-            const data = await api<SessionData>(`/auth/${mode}`, "POST", {
-              email,
-              password,
-              name,
-              consent,
-              turnstileToken: token,
-            });
-            onSuccess(data);
+            const data = await api<SessionData | NextStep>(
+              `/auth/${mode}`,
+              "POST",
+              {
+                email,
+                password,
+                newPassword: password,
+                name,
+                consent,
+                code,
+                turnstileToken: token,
+              },
+            );
+            if ("next" in data) {
+              setMode(data.next);
+              setNotice(data.message);
+              setPassword("");
+              setCode("");
+            } else onSuccess(data);
           } catch (err) {
+            if (err instanceof ApiError && err.code === "consent_required")
+              setNeedsConsent(true);
             setError(errorMessage(err));
-            setToken("");
-            setAttempt((v) => v + 1);
           } finally {
             setBusy(false);
+            resetChallenge();
           }
         }}
       >
@@ -125,31 +173,51 @@ export default function AuthModal({
             />
           </div>
         </label>
-        <label className="field">
-          Password
-          <div className="input-icon">
-            <LockKeyhole size={16} />
+        {confirming && (
+          <label className="field">
+            Code from your email
             <input
-              type={visible ? "text" : "password"}
-              autoComplete={register ? "new-password" : "current-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              minLength={12}
-              maxLength={128}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6,10}"
+              minLength={6}
+              maxLength={10}
               required
-              placeholder="At least 12 characters"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              placeholder="Verification code"
             />
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={visible ? "Hide password" : "Show password"}
-              onClick={() => setVisible(!visible)}
-            >
-              {visible ? <EyeOff size={16} /> : <Eye size={16} />}
-            </button>
-          </div>
-        </label>
-        {register ? (
+          </label>
+        )}
+        {(mode === "login" || register || mode === "reset") && (
+          <label className="field">
+            {mode === "reset" ? "New password" : "Password"}
+            <div className="input-icon">
+              <LockKeyhole size={16} />
+              <input
+                type={visible ? "text" : "password"}
+                autoComplete={
+                  mode === "login" ? "current-password" : "new-password"
+                }
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                minLength={12}
+                maxLength={128}
+                required
+                placeholder="At least 12 characters"
+              />
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={visible ? "Hide password" : "Show password"}
+                onClick={() => setVisible(!visible)}
+              >
+                {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </label>
+        )}
+        {(register || mode === "verify" || needsConsent) && (
           <label className="check-field">
             <input
               type="checkbox"
@@ -158,27 +226,47 @@ export default function AuthModal({
               required
             />
             <span>
-              I understand chats are saved to my account and sent to Groq, or
-              Google Gemini if fallback is enabled. Free-tier providers may use
-              data under their policies. I will not send sensitive information.
-              Email verification and recovery are unavailable.
+              My chats are stored with Cloudflare and sent to Groq, or Google
+              Gemini when fallback is enabled.{" "}
+              {config.authProvider === "supabase" &&
+                "Supabase processes my email and password for authentication. "}
+              Provider privacy and retention policies apply. I will not send
+              sensitive information.
             </span>
           </label>
-        ) : (
+        )}
+        {mode === "login" && (
           <button
             type="button"
             className="text-button"
-            onClick={() => setRecovery(!recovery)}
+            onClick={() =>
+              config.recoveryAvailable
+                ? changeMode("recover")
+                : setNotice(
+                    "Email recovery is not configured on this deployment. ZYRA cannot send a reset code. The site owner cannot retrieve your password.",
+                  )
+            }
           >
             Forgot password?
           </button>
         )}
-        {recovery && !register && (
-          <p className="notice">
-            Email recovery is not configured on this deployment. ZYRA cannot
-            send a reset link. Keep your password in a password manager; the
-            site owner cannot retrieve it.
-          </p>
+        {mode === "recover" && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => changeMode("reset")}
+          >
+            I already have a recovery code
+          </button>
+        )}
+        {mode === "register" && config.authProvider === "supabase" && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => changeMode("verify")}
+          >
+            I already have a confirmation code
+          </button>
         )}
         {ready && (
           <Turnstile
@@ -197,11 +285,7 @@ export default function AuthModal({
           className="primary-button full"
           disabled={busy || !ready || (!!config.turnstileSiteKey && !token)}
         >
-          {busy
-            ? "One moment…"
-            : register
-              ? "Create your account"
-              : "Sign in to ZYRA"}
+          {busy ? "One moment…" : labels[mode]}
           <ArrowRight size={16} />
         </button>
       </form>

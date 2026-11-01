@@ -3,8 +3,8 @@
 | Symptom | Check / fix |
 | --- | --- |
 | “AI connection awaiting setup” | Set the Worker secret `GROQ_API_KEY` and confirm your free provider accounts before setting `FREE_TIER_CONFIRMED=true`. Rebuild/redeploy after non-secret variable changes. |
-| Signup/sign-in disabled | Production requires a valid Turnstile site/secret pair, `ABUSE_SECRET` with at least 24 characters, and the measured `AUTH_CPU_VERIFIED=true` gate. Signup additionally requires `REGISTRATION_ENABLED=true`. |
-| Worker error 1102 / `exceededCpu` on auth | Do not lower scrypt strength or buy a plan automatically. Keep signup closed; the required Free Worker architecture needs a reviewed alternative auth design if full auth cannot fit. |
+| Signup/sign-in disabled | Production Supabase auth requires `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, a valid Turnstile pair and random `ABUSE_SECRET` of at least 32 characters. Signup additionally requires `REGISTRATION_ENABLED=true` and `SUPABASE_EMAIL_ENABLED=true`. See SUPABASE_SETUP.md. |
+| Worker error 1102 / `exceededCpu` on auth | Do not lower scrypt strength or buy a plan automatically. The public Worker now uses Supabase Auth. Check `AUTH_PROVIDER=supabase`; keep `AUTH_CPU_VERIFIED=false`. Measure full Supabase-backed request CPU after deployment. |
 | `no such table` | Apply all migrations to the correct local or remote D1 database. `pnpm db:local` and `pnpm db:remote` are intentionally different. |
 | Local UI works but accounts fail | Open the exact local URL. Only approved local hostnames plus `APP_ENV=development` bypass Turnstile. `.dev.vars` is for local Worker variables; `.env` frontend variables do not configure this backend. |
 | Security check expires | Refresh the dialog. Verify the widget hostname matches the current domain and tokens use the matching login/register action. Tokens are single-use. |
@@ -20,7 +20,16 @@
 | Microphone button absent | This browser lacks the SpeechRecognition API or a secure context. Use text input. Voice support is not simulated. |
 | Malayalam speech unavailable | The device/browser may lack a Malayalam voice or recognition service. Text chat remains available; select Malayalam explicitly for voice input. |
 | PDF or image cannot be attached | Only plain UTF-8 text/code is enabled. PDF parsing, OCR, and image understanding are not implemented for this text-only pipeline. |
-| Forgot password | No email delivery/recovery integration exists. There is no fake reset action. Keep credentials in a password manager; the site owner cannot recover plaintext passwords. |
+| Forgot password | Recovery is available only after Supabase SMTP delivery and the reset-code template are configured. Keep `SUPABASE_EMAIL_ENABLED=false` until tested. The owner cannot retrieve plaintext passwords. |
 | GitHub Pages UI has no backend | Deploy the Worker and D1 on Cloudflare. Static Pages hosting cannot execute this backend. |
 
 Never paste secrets into a bug report. Include only the route, time, HTTP status, safe error code, and whether the issue happens locally or on the deployed site.
+
+## Supabase migration troubleshooting
+
+- **No email/code:** configure real SMTP; the built-in sender accepts only authorized project-team addresses. Use the supplied `{{ .Token }}` email templates. Keep Confirm email on.
+- **Supabase project paused:** resume it on the Free plan. Do not upgrade automatically.
+- **Session expired after secret rotation:** expected; sign in again. Chat data remains in D1.
+- **Identity conflict:** an existing local account shares that email. No data is moved automatically; do not delete the old account or link by email to bypass this protection.
+- **Deletion queued:** access is already revoked. Confirm the hourly scheduled trigger is deployed; review pending rows in `auth_deletions` and the server-only Supabase secret. The job retries without the user's password.
+- **Runtime configuration disappears after Git deploy:** use Cloudflare Secret type for all three Supabase values, and keep nonsecret flags in `wrangler.jsonc`. Do not commit keys.

@@ -17,3 +17,12 @@ ABUSE_SECRET=
 TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=
 AUTH_CPU_VERIFIED=false
+
+# Default local-only authentication remains available for offline tests.
+# Use supabase with a dedicated FREE test project to test hosted authentication.
+AUTH_PROVIDER=local
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SECRET_KEY=
+# Set true only after confirmation/recovery delivery and OTP templates are tested.
+SUPABASE_EMAIL_ENABLED=false

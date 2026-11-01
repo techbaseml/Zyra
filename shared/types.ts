@@ -41,7 +41,8 @@ export type AppConfig = {
   authReady: boolean;
   registrationEnabled: boolean;
   turnstileSiteKey: string;
-  recoveryAvailable: false;
+  recoveryAvailable: boolean;
+  authProvider?: "supabase" | "local";
   dailyLimit: number;
 };
 export type SessionData = {

@@ -4,7 +4,7 @@
 
 A React + Vite + TypeScript application with a Cloudflare Worker API, D1 accounts/history, genuine Groq streaming integration, and optional Gemini fallback. The interface includes an original animated orb, responsive glass surfaces, Malayalam/English preferences, light/dark themes, and accessible dialogs.
 
-**Delivery status:** application source and automated tests are implemented. Provider keys were not supplied, so live inference and language quality have not been verified. Public signup is closed by default. Strong authentication has not been verified within Cloudflare Workers Free CPU limits. This source delivery is **not a claim of a fully operational or independently audited production AI service**. See [launch checks](docs/TESTING.md) and [the authentication deployment gate](docs/DEPLOYMENT.md#4-prove-strong-authentication-fits-your-free-worker).
+**Current deployment work:** Supabase Auth replaces password hashing on the public Worker. The existing UI and D1 chat storage are retained. The earlier custom-password diagnostic consumed 383 ms CPU and is disabled. Supabase project credentials and working email delivery are required before public registration opens. Automated transport tests do not prove live Supabase, email delivery, Groq inference, or deployed CPU performance. Follow [Supabase setup](docs/SUPABASE_SETUP.md).
 
 ## Start here
 
@@ -29,7 +29,7 @@ Use Node.js 22.13+. On PowerShell use `Copy-Item .dev.vars.example .dev.vars`. O
 | Area | Behavior |
 | --- | --- |
 | Chat | Genuine server streaming adapters; Markdown/code highlighting; copy; edit/resend; regenerate; cancellation; context; error and interrupted states |
-| Accounts | Email/password registration and login, scrypt hashing, opaque seven-day sessions, secure cookies, profile editing, password change, logout, password-confirmed account deletion |
+| Accounts | Supabase email/password authentication; email confirmation and recovery codes when configured; encrypted server-side provider sessions; opaque seven-day cookies; profile editing; password change; logout; durable account deletion |
 | History | D1 persistence, account isolation, recent chats, title search, first-question titles, rename/delete, Markdown export, confirmed clear-all |
 | Sync | Reload/focus refresh and 30-second foreground polling; preferences load on sign-in and save to D1 |
 | Languages | Malayalam Unicode, language-aware system prompt, automatic or explicit Malayalam/English preference |
@@ -43,12 +43,12 @@ Provider brands are disclosed in signup, About and Privacy. No mock answer path 
 ## Deliberate limitations
 
 - No live web search, code execution, image understanding, PDF parsing, permanent personal memory, or image-generation claims.
-- No email sending, email ownership verification, or password recovery. The account email is an identifier; the UI explains this limitation.
+- Public email signup, verification and recovery require real SMTP delivery configured in Supabase. These features remain closed until the operator confirms delivery. Supabase's built-in mail service is for testing with authorized team addresses, not general public delivery.
 - Text attachments only, up to 12 KB and subject to the smaller model context budget. No fake image-upload control.
 - At most 200 conversations/account and 100 turns/conversation. Only newest bounded context (up to 40 messages) reaches inference. History remains viewable until deleted.
 - One active generation per account. Failed requests may consume capacity; editing/regenerating counts. Quotas reset at midnight UTC (05:30 in India), but shared limits may pause access earlier.
 - Free models and quotas can change. The app cannot detect a key's billing tier. Use unbilled projects, check terms, and configure the explicit free-tier gate.
-- Free Workers currently impose 10 ms CPU/request. Strong scrypt may not fit; keep authentication closed until deployment measurements establish feasibility. No weakened hash or paid upgrade is substituted.
+- Supabase handles public password hashing off the Worker. Local scrypt remains for offline development and legacy data only; it is not enabled on this Free production Worker. Deployed complete-flow CPU still needs measurement. Supabase Free projects may pause after inactivity.
 
 ## Project structure
 
@@ -62,7 +62,10 @@ zyra-ai/
   worker/                   Cloudflare REST API
     index.ts                Auth, profile, history and API routing
     security.ts             scrypt, validation, throttling, Turnstile, headers
-    auth.ts                 Opaque sessions, CSRF, settings
+    auth.ts                 Opaque sessions, encrypted tokens, refresh leases, CSRF
+    supabase.ts             Server-only Auth REST client and token encryption
+    supabase-routes.ts      Signup, login, email code confirmation and recovery
+    account-deletion.ts     Durable deletion and scheduled retries
     chat.ts                 Locks, context, streaming and storage
     providers.ts            Groq/Gemini streaming and fallback rules
     models.ts               Reviewed free-model allowlists
